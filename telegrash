@@ -1,0 +1,146 @@
+#!/bin/bash
+CONFIGS=(/etc/telegrash /etc/telegrash.rc /etc/telegrash.config $PWD/telegrash.rc $PWD/telegrash.config)
+MESSAGEURL="sendMessage"
+LOCATIONURL="sendVenue"
+UPDATESURL="getUpdates"
+function usage(){
+    echo "$0 -U| [-c <config file>] [-k <API KEY>] [-T <chat id>] [-m <message>] [-t <title>] [-x <GPS longitude>] [-y <GPS latitude>] [-a <address>]"
+}
+
+WORKDIR="$(mktemp -d)"
+trap "rm -rf $WORKDIR" 0
+
+function log(){
+  echo "[$(date +%Y%m%d%H%M%S)] $@"
+}
+
+
+function process_messages(){
+  messages="$1"
+  
+  tipo="$(cat $messages|jshon -t)"
+  if [ "$tipo" != "array" ];then
+    log "ERROR: Messages to process are not an aray"
+    return 1
+  fi
+  unset ${!UPDATE@}
+  total="$(cat $messages|jshon -l)"
+  for i in $(seq 0 $((total-1)));do
+    id="$(cat $messages|jshon -e$i -e update_id)"
+    UPDATES[$id]="${id}"
+    eval "UPDATE_update_id[$id]='$id'"
+    for campo in message_id date text;do
+      eval "UPDATE_message_${campo}[$id]='$(cat $messages|jshon -e$i -e message -e $campo -u)'"
+    done
+    for campo in id first_name username;do
+      eval "UPDATE_message_from_${campo}[$id]='$(cat $messages|jshon -e$i -e message -e from -e $campo -u)'"
+    done
+    for campo in id first_name username "type";do
+      eval "UPDATE_message_chat_${campo}[$id]='$(cat $messages|jshon -e$i -e message -e chat -e $campo -u)'"
+    done
+  done
+}
+
+for i in ${CONFIGS[*]};do
+  if [ -s "${i}" ];then
+    log "Loading ${i}..."
+    #TODO: Sanitize config file?
+    source "${i}"
+  fi
+done
+log "Config files loaded"
+
+while getopts "Uhc:k:t:m:x:y:a:T:" opt;do
+  case $opt in
+    c) 
+      if [ -s "$OPTARG" ];then
+        source $OPTARG
+      else
+        log "Error loading $OPTARG"
+        exit 1
+      fi
+      ;;
+    k) APIKEY="$OPTARG" ;;
+    T) CHAT_ID="$OPTARG" ;;
+    t) TITLE="$OPTARG" ;;
+    x) GPS_X="$OPTARG" ;;
+    y) GPS_Y="$OPTARG" ;;
+    a) ADDRESS="$OPTARG" ;;
+    m) MESSAGE="$OPTARG" ;;
+    U) GETUPDATES="YES" ;;
+    h) usage ;exit 0;;
+    \?)
+      log "Syntax Error"
+      exit 1
+  esac
+done
+shift $((OPTIND - 1))
+
+if [ -z "$APIKEY" ];then
+  log "ERROR: Missing APIKEY"
+  exit 1
+fi
+
+BASEURL="https://api.telegram.org/bot$APIKEY"
+
+if [ "$GETUPDATES" ];then
+  URL="$BASEURL/$UPDATESURL" 
+else
+  if [ -z "$CHAT_ID" ];then
+    log "ERROR: Missing CHAT_ID"
+    exit 1
+  fi
+  
+  if [ "$GPS_X$GPS_Y$ADDRESS" ];then
+    if [ -z "$GPS_X" ] || [ -z "$GPS_Y" ] || [ -z "$ADDRESS" ];then
+      log "ERROR: You need to set a full location, -x -y and -a"
+      exit 1
+    fi
+    if [ "$MESSAGE" ];then
+      log "ERROR: If you send a location you cannot send a message"
+      exit 1
+    fi
+    URL="$BASEURL/$LOCATIONURL"
+    POSTDATA[${#POSTDATA[*]}]="latitude=$GPS_X"
+    POSTDATA[${#POSTDATA[*]}]="longitude=$GPS_Y"
+    POSTDATA[${#POSTDATA[*]}]="address=$ADDRESS"
+    POSTDATA[${#POSTDATA[*]}]="title=$TITLE"
+  else
+    URL="$BASEURL/$MESSAGEURL"
+    POSTDATA[${#POSTDATA[*]}]="text=$MESSAGE"
+  fi
+  
+  
+  POSTDATA[${#POSTDATA[*]}]="disable_web_page_preview=1"
+  POSTDATA[${#POSTDATA[*]}]="chat_id=$CHAT_ID"
+  
+  
+  POSTARGS=""
+  for i in ${POSTDATA[*]};do
+    POSTARGS+=" --data-urlencode $i"
+  done
+
+fi
+TIMEOUT="${TIMEOUT:-10}"
+curl -sS --max-time $TIMEOUT $POSTARGS $URL > $WORKDIR/curloutput
+
+STATUS="$(cat $WORKDIR/curloutput |jshon -e ok)"
+
+if [ "$STATUS" == "true" ];then
+  if [ "$GETUPDATES" ];then
+    cat $WORKDIR/curloutput |jshon -e result > $WORKDIR/curlresult
+    process_messages  $WORKDIR/curlresult
+    echo "You have ${#UPDATES[*]} messages"
+    for i in ${UPDATES[*]};do
+        echo "[$(date -d "@${UPDATE_message_date[$i]}")] ${UPDATE_message_from_first_name[$i]}(${UPDATE_message_from_username[$i]}): ${UPDATE_message_text[$i]}";
+    done
+    
+  fi
+  exit 
+else
+  cat $WORKDIR/curloutput|jshon -e result > $WORKDIR/curlmessages
+  process_messages $WORKDIR/curlmessages
+  
+  exit 1
+fi
+
