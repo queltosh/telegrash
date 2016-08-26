@@ -115,18 +115,18 @@ else
       exit 1
     fi
     URL="$BASEURL/$LOCATIONURL"
-    POSTDATA[${#POSTDATA[*]}]="latitude=$GPS_X"
-    POSTDATA[${#POSTDATA[*]}]="longitude=$GPS_Y"
-    POSTDATA[${#POSTDATA[*]}]="address=$ADDRESS"
-    POSTDATA[${#POSTDATA[*]}]="title=$TITLE"
+    POSTDATA+=("latitude=$GPS_X")
+    POSTDATA+=("longitude=$GPS_Y")
+    POSTDATA+=("address=$ADDRESS")
+    POSTDATA+=("title=$TITLE")
   else
     URL="$BASEURL/$MESSAGEURL"
-    POSTDATA[${#POSTDATA[*]}]="text=$MESSAGE"
+    POSTDATA+=("text=$MESSAGE")
   fi
   
   
-  POSTDATA[${#POSTDATA[*]}]="disable_web_page_preview=1"
-  POSTDATA[${#POSTDATA[*]}]="chat_id=$CHAT_ID"
+  POSTDATA+=("disable_web_page_preview=1")
+  POSTDATA+=("chat_id=$CHAT_ID")
   
   
   POSTARGS=""
